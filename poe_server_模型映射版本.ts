@@ -37,11 +37,10 @@ function filterRequestBody(body: any) {
     stream_options: body.stream_options,
     top_p: body.top_p,
     stop: body.stop,
-    temperature: Math.min(Math.max(body.temperature || 1, 0), 2), // 限制在0-2之间
-    n: 1 // 强制为1
+    temperature: body.temperature ? Math.min(Math.max(body.temperature, 0), 2) : undefined,
+    n: 1
   };
   
-  // 移除undefined值
   return Object.fromEntries(Object.entries(supported).filter(([_, v]) => v !== undefined));
 }
 
@@ -52,20 +51,10 @@ async function handleImageGeneration(req: Request) {
 
   const reqBody = await req.json();
   
-  // 转换为chat格式
   const chatRequest = filterRequestBody({
     model: "dall-e-3",
-    messages: [{
-      role: "user",
-      content: `Generate an image with these specifications:
-Prompt: ${reqBody.prompt || ""}
-Size: ${reqBody.size || "1024x1024"}
-Quality: ${reqBody.quality || "standard"}
-Style: ${reqBody.style || "vivid"}
-Number of images: ${reqBody.n || 1}`
-    }],
-    max_tokens: 1000,
-    temperature: 0.7
+    messages: [{ role: "user", content: reqBody.prompt }],
+    max_tokens: 1000
   });
 
   try {
@@ -83,28 +72,24 @@ Number of images: ${reqBody.n || 1}`
       return jsonResponse({ 
         error: { 
           message: errorData.error?.message || "Upstream API error",
-          type: getErrorType(response.status),
-          code: response.status
+          type: getErrorType(response.status)
         } 
       }, response.status);
     }
 
     const chatResponse = await response.json();
     const content = chatResponse.choices?.[0]?.message?.content || "";
-    
-    // 提取图片URL
     const imageUrl = content.match(/https:\/\/[^\s\)]+/g)?.[0] || "";
-    const revisedPrompt = content.match(/!\[([^\]]+)\]/)?.[1] || reqBody.prompt || "Generated image";
 
     return jsonResponse({
       created: Math.floor(Date.now() / 1000),
       data: [{
         url: imageUrl,
-        revised_prompt: revisedPrompt
+        revised_prompt: reqBody.prompt
       }]
     });
 
-  } catch (error) {
+  } catch {
     return jsonResponse({ 
       error: { 
         message: "Network error or timeout",
@@ -147,7 +132,7 @@ async function handleChatCompletion(req: Request) {
       return new Response(responseText, { status: response.status, headers });
     }
 
-  } catch (error) {
+  } catch {
     return jsonResponse({ 
       error: { 
         message: "Network error or timeout",
@@ -178,7 +163,6 @@ function getErrorType(status: number): string {
 async function handle(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url);
 
-  // CORS预检请求
   if (req.method === "OPTIONS") {
     return new Response(null, {
       headers: {
@@ -190,12 +174,8 @@ async function handle(req: Request): Promise<Response> {
   }
 
   if (req.method === "POST") {
-    if (pathname === "/v1/images/generations") {
-      return handleImageGeneration(req);
-    }
-    if (pathname === "/v1/chat/completions") {
-      return handleChatCompletion(req);
-    }
+    if (pathname === "/v1/images/generations") return handleImageGeneration(req);
+    if (pathname === "/v1/chat/completions") return handleChatCompletion(req);
   }
 
   if (req.method === "GET" && pathname === "/v1/models") {
@@ -211,23 +191,12 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
-  // 健康检查
   return jsonResponse({
     message: "OpenAI兼容代理服务",
-    version: "1.0.0",
-    endpoints: {
-      chat: "/v1/chat/completions",
-      images: "/v1/images/generations", 
-      models: "/v1/models"
-    },
-    models_loaded: Object.keys(modelMapping).length
+    endpoints: ["/v1/chat/completions", "/v1/images/generations", "/v1/models"]
   });
 }
 
-// 启动服务
 await loadModelMapping();
 serve(handle, { port: 8000 });
-console.log("🚀 OpenAI兼容代理服务已启动");
-console.log("📡 聊天接口: http://localhost:8000/v1/chat/completions");
-console.log("🎨 图片生成: http://localhost:8000/v1/images/generations");
-console.log("📋 模型列表: http://localhost:8000/v1/models");
+console.log("🚀 服务已启动: http://localhost:8000");
