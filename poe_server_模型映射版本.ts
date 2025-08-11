@@ -51,6 +51,28 @@ async function handleImageGeneration(req: Request) {
 
   const reqBody = await req.json();
   
+  // 检查尺寸参数
+  if (reqBody.size) {
+    // 如果指定了尺寸但不是 1024x1024，返回错误
+    if (reqBody.size !== "1024x1024") {
+      console.log(`拒绝请求: 尺寸 ${reqBody.size} 不被支持`);
+      return jsonResponse({ 
+        error: { 
+          message: `Invalid size: ${reqBody.size}. Only 1024x1024 is supported.`,
+          type: "invalid_request_error",
+          param: "size",
+          code: "invalid_size"
+        } 
+      }, 400);
+    }
+  } else {
+    // 如果没有指定尺寸，设置默认值为 1024x1024
+    reqBody.size = "1024x1024";
+    console.log("未指定尺寸，使用默认值: 1024x1024");
+  }
+  
+  console.log(`处理图片生成请求: 尺寸=${reqBody.size}, prompt="${reqBody.prompt}"`);
+  
   const chatRequest = filterRequestBody({
     model: "dall-e-3",
     messages: [{ role: "user", content: reqBody.prompt }],
@@ -98,7 +120,8 @@ async function handleImageGeneration(req: Request) {
       }]
     });
 
-  } catch {
+  } catch (error) {
+    console.error("上游请求失败:", error);
     return jsonResponse({ 
       error: { 
         message: "Network error or timeout",
