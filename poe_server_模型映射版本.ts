@@ -80,12 +80,21 @@ async function handleImageGeneration(req: Request) {
     const chatResponse = await response.json();
     const content = chatResponse.choices?.[0]?.message?.content || "";
     const imageUrl = content.match(/https:\/\/[^\s\)]+/g)?.[0] || "";
+    
+    // 从AI响应中提取描述作为revised_prompt
+    // 移除URL后的内容作为描述
+    let revisedPrompt = content.replace(/https:\/\/[^\s\)]+/g, '').trim();
+    
+    // 如果没有描述内容，使用原始prompt
+    if (!revisedPrompt || revisedPrompt.length < 10) {
+      revisedPrompt = reqBody.prompt;
+    }
 
     return jsonResponse({
       created: Math.floor(Date.now() / 1000),
       data: [{
-        url: imageUrl,
-        revised_prompt: reqBody.prompt
+        revised_prompt: revisedPrompt,
+        url: imageUrl
       }]
     });
 
