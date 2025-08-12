@@ -46,10 +46,13 @@ function filterRequestBody(body: any) {
 
 // 处理DALL-E-3图片生成
 async function handleImageGeneration(req: Request) {
+  console.log("🖼️ [IMAGE GENERATION] 进入图片生成处理函数");
+  
   const token = getToken(req);
   if (!token) return jsonResponse({ error: { message: "Missing Bearer token" } }, 401);
 
   const reqBody = await req.json();
+  console.log("🖼️ [IMAGE GENERATION] 请求体:", JSON.stringify(reqBody, null, 2));
   
   // 检查尺寸参数
   if (reqBody.size) {
@@ -71,7 +74,7 @@ async function handleImageGeneration(req: Request) {
     console.log("未指定尺寸，使用默认值: 1024x1024");
   }
   
-  console.log(`处理图片生成请求: 尺寸=${reqBody.size}, prompt="${reqBody.prompt}"`);
+  console.log(`🖼️ [IMAGE GENERATION] 处理图片生成请求: 尺寸=${reqBody.size}, prompt="${reqBody.prompt}"`);
   
   const chatRequest = filterRequestBody({
     model: "dall-e-3",
@@ -103,25 +106,23 @@ async function handleImageGeneration(req: Request) {
     const content = chatResponse.choices?.[0]?.message?.content || "";
     const imageUrl = content.match(/https:\/\/[^\s\)]+/g)?.[0] || "";
     
-    // 从AI响应中提取描述作为revised_prompt
-    // 移除URL后的内容作为描述
-    let revisedPrompt = content.replace(/https:\/\/[^\s\)]+/g, '').trim();
+    console.log("🖼️ [IMAGE GENERATION] 上游响应内容:", content);
+    console.log("🖼️ [IMAGE GENERATION] 提取的图片URL:", imageUrl);
+    console.log("🖼️ [IMAGE GENERATION] ✅ 准备返回固定的 revised_prompt: '成功生成图片！'");
     
-    // 如果没有描述内容，使用原始prompt
-    if (!revisedPrompt || revisedPrompt.length < 10) {
-      revisedPrompt = reqBody.prompt;
-    }
-
-    return jsonResponse({
+    const result = {
       created: Math.floor(Date.now() / 1000),
       data: [{
-        revised_prompt: revisedPrompt,
+        revised_prompt: "成功生成图片！",
         url: imageUrl
       }]
-    });
+    };
+    
+    console.log("🖼️ [IMAGE GENERATION] 📤 返回结果:", JSON.stringify(result, null, 2));
+    return jsonResponse(result);
 
   } catch (error) {
-    console.error("上游请求失败:", error);
+    console.error("🖼️ [IMAGE GENERATION] 上游请求失败:", error);
     return jsonResponse({ 
       error: { 
         message: "Network error or timeout",
@@ -133,11 +134,15 @@ async function handleImageGeneration(req: Request) {
 
 // 处理聊天完成
 async function handleChatCompletion(req: Request) {
+  console.log("💬 [CHAT COMPLETION] 进入聊天完成处理函数");
+  
   const token = getToken(req);
   if (!token) return jsonResponse({ error: { message: "Missing Bearer token" } }, 401);
 
   const reqBody = await req.json();
   const filteredBody = filterRequestBody(reqBody);
+
+  console.log("💬 [CHAT COMPLETION] 请求模型:", reqBody.model);
 
   try {
     const response = await fetch(UPSTREAM_API, {
@@ -161,6 +166,7 @@ async function handleChatCompletion(req: Request) {
     } else {
       headers["content-type"] = "application/json";
       const responseText = await response.text();
+      console.log("💬 [CHAT COMPLETION] 返回原始聊天响应");
       return new Response(responseText, { status: response.status, headers });
     }
 
@@ -194,6 +200,7 @@ function getErrorType(status: number): string {
 // 主处理函数
 async function handle(req: Request): Promise<Response> {
   const { pathname } = new URL(req.url);
+  console.log(`📥 收到请求: ${req.method} ${pathname}`);
 
   if (req.method === "OPTIONS") {
     return new Response(null, {
@@ -206,8 +213,14 @@ async function handle(req: Request): Promise<Response> {
   }
 
   if (req.method === "POST") {
-    if (pathname === "/v1/images/generations") return handleImageGeneration(req);
-    if (pathname === "/v1/chat/completions") return handleChatCompletion(req);
+    if (pathname === "/v1/images/generations") {
+      console.log("🎯 路由匹配: 图片生成端点");
+      return handleImageGeneration(req);
+    }
+    if (pathname === "/v1/chat/completions") {
+      console.log("🎯 路由匹配: 聊天完成端点");
+      return handleChatCompletion(req);
+    }
   }
 
   if (req.method === "GET" && pathname === "/v1/models") {
@@ -223,6 +236,7 @@ async function handle(req: Request): Promise<Response> {
     });
   }
 
+  console.log("❌ 未匹配到任何路由");
   return jsonResponse({
     message: "OpenAI兼容代理服务",
     endpoints: ["/v1/chat/completions", "/v1/images/generations", "/v1/models"]
