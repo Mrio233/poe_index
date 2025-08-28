@@ -66,7 +66,7 @@ async function handleImageGeneration(req: Request) {
           param: "size",
           code: "invalid_size"
         } 
-      }, 400);
+      }, 500);
     }
   } else {
     // 如果没有指定尺寸，设置默认值为 1024x1024
