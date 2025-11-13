@@ -88,39 +88,56 @@ async function handleImageGeneration(req: Request) {
   console.log("🖼️ [IMAGE GENERATION] 请求体:", JSON.stringify(reqBody, null, 2));
   
   // 检查尺寸参数
-  if (reqBody.size) {
-    // 如果指定了尺寸但不是 1024x1024，返回错误
-    if (reqBody.size !== "1024x1024") {
-      console.log(`拒绝请求: 尺寸 ${reqBody.size} 不被支持`);
-      return jsonResponse({ 
-        error: { 
-          message: `Invalid size: ${reqBody.size}. Only 1024x1024 is supported.`,
-          type: "invalid_request_error",
-          param: "size",
-          code: "invalid_size"
-        } 
-      }, 500);
-    }
+  const size = reqBody.size || "1024x1024";
+  let aspect: string | undefined;
+  
+  // 根据尺寸设置 aspect 参数
+  if (size === "1024x1024") {
+    // 默认尺寸，不需要 aspect 参数
+    aspect = undefined;
+    console.log("尺寸 1024x1024: 不需要 aspect 参数");
+  } else if (size === "1792x1024") {
+    aspect = "7:4";
+    console.log(`尺寸 1792x1024: 设置 aspect 参数为 ${aspect}`);
+  } else if (size === "1024x1792") {
+    aspect = "4:7";
+    console.log(`尺寸 1024x1792: 设置 aspect 参数为 ${aspect}`);
   } else {
-    // 如果没有指定尺寸，设置默认值为 1024x1024
-    reqBody.size = "1024x1024";
-    console.log("未指定尺寸，使用默认值: 1024x1024");
+    // 不支持的尺寸
+    console.log(`拒绝请求: 尺寸 ${size} 不被支持`);
+    return jsonResponse({ 
+      error: { 
+        message: `Invalid size: ${size}. Supported sizes are: 1024x1024, 1792x1024, 1024x1792.`,
+        type: "invalid_request_error",
+        param: "size",
+        code: "invalid_size"
+      } 
+    }, 400);
   }
   
-  console.log(`🖼️ [IMAGE GENERATION] 处理图片生成请求: 尺寸=${reqBody.size}, prompt="${reqBody.prompt}"`);
+  // 确保尺寸为 1024x1024（因为 Poe API 只支持这个尺寸，aspect 参数控制实际比例）
+  const upstreamSize = "1024x1024";
   
-  // 使用 filterRequestBody 来处理参数转换
-  const chatRequest = filterRequestBody({
+  console.log(`🖼️ [IMAGE GENERATION] 处理图片生成请求: 用户尺寸=${size}, 上游尺寸=${upstreamSize}, aspect=${aspect}, prompt="${reqBody.prompt}"`);
+  
+  // 构建请求体，将 aspect 作为非标准参数传递
+  // filterRequestBody 会自动将 aspect 放入 extra_body
+  const requestParams: any = {
     model: "dall-e-3",
     messages: [{ role: "user", content: reqBody.prompt }],
     max_tokens: 1000,
-    // 将图片特有的参数传递进去，非标准参数会被自动放入 extra_body
-    size: reqBody.size,
-    aspect_ratio: reqBody.aspect_ratio,
+    size: upstreamSize, // Poe 只支持 1024x1024
     quality: reqBody.quality,
     style: reqBody.style
-  });
-
+  };
+  
+  // 如果有 aspect 参数，添加它（会被放入 extra_body）
+  if (aspect) {
+    requestParams.aspect = aspect;
+  }
+  
+  // 使用 filterRequestBody 来处理参数转换
+  const chatRequest = filterRequestBody(requestParams);
   console.log("🖼️ [IMAGE GENERATION] 转换后的请求:", JSON.stringify(chatRequest, null, 2));
 
   try {
