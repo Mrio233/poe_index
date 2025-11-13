@@ -26,22 +26,55 @@ const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(da
   }
 });
 
-// 过滤支持的参数
+// OpenAI 标准参数列表
+const STANDARD_PARAMS = [
+  'model', 'messages', 'max_tokens', 'max_completion_tokens', 'stream', 
+  'stream_options', 'top_p', 'stop', 'temperature', 'n', 
+  'presence_penalty', 'frequency_penalty', 'logit_bias', 'user', 
+  'functions', 'function_call', 'tools', 'tool_choice', 
+  'response_format', 'seed', 'prompt', 'size', 'quality', 'style'
+];
+
+// 过滤支持的参数并自动转换 extra_body
 function filterRequestBody(body: any) {
-  const supported = {
+  const result: any = {
     model: mapModel(body.model),
     messages: body.messages,
-    max_tokens: body.max_tokens,
-    max_completion_tokens: body.max_completion_tokens,
-    stream: body.stream,
-    stream_options: body.stream_options,
-    top_p: body.top_p,
-    stop: body.stop,
-    temperature: body.temperature ? Math.min(Math.max(body.temperature, 0), 2) : undefined,
-    n: 1
   };
+
+  // 处理标准参数
+  for (const param of STANDARD_PARAMS) {
+    if (param === 'model' || param === 'messages') continue; // 已处理
+    
+    if (body[param] !== undefined) {
+      if (param === 'temperature') {
+        result[param] = Math.min(Math.max(body[param], 0), 2);
+      } else {
+        result[param] = body[param];
+      }
+    }
+  }
   
-  return Object.fromEntries(Object.entries(supported).filter(([_, v]) => v !== undefined));
+  // 收集非标准参数到 extra_body
+  const extraBody: any = {};
+  for (const key in body) {
+    if (!STANDARD_PARAMS.includes(key) && key !== 'extra_body') {
+      extraBody[key] = body[key];
+    }
+  }
+  
+  // 如果用户已经提供了 extra_body，需要合并
+  if (body.extra_body && typeof body.extra_body === 'object') {
+    Object.assign(extraBody, body.extra_body);
+  }
+  
+  // 如果有额外的参数，添加到 extra_body
+  if (Object.keys(extraBody).length > 0) {
+    result.extra_body = extraBody;
+  }
+  
+  // 过滤 undefined 值
+  return Object.fromEntries(Object.entries(result).filter(([_, v]) => v !== undefined));
 }
 
 // 处理DALL-E-3图片生成
@@ -76,11 +109,19 @@ async function handleImageGeneration(req: Request) {
   
   console.log(`🖼️ [IMAGE GENERATION] 处理图片生成请求: 尺寸=${reqBody.size}, prompt="${reqBody.prompt}"`);
   
+  // 使用 filterRequestBody 来处理参数转换
   const chatRequest = filterRequestBody({
     model: "dall-e-3",
     messages: [{ role: "user", content: reqBody.prompt }],
-    max_tokens: 1000
+    max_tokens: 1000,
+    // 将图片特有的参数传递进去，非标准参数会被自动放入 extra_body
+    size: reqBody.size,
+    aspect_ratio: reqBody.aspect_ratio,
+    quality: reqBody.quality,
+    style: reqBody.style
   });
+
+  console.log("🖼️ [IMAGE GENERATION] 转换后的请求:", JSON.stringify(chatRequest, null, 2));
 
   try {
     const response = await fetch(UPSTREAM_API, {
@@ -143,6 +184,7 @@ async function handleChatCompletion(req: Request) {
   const filteredBody = filterRequestBody(reqBody);
 
   console.log("💬 [CHAT COMPLETION] 请求模型:", reqBody.model);
+  console.log("💬 [CHAT COMPLETION] 转换后的请求:", JSON.stringify(filteredBody, null, 2));
 
   try {
     const response = await fetch(UPSTREAM_API, {
