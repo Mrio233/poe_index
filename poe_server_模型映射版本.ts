@@ -2,22 +2,34 @@
 import { serve } from "https://deno.land/std@0.224.0/http/server.ts";
 
 const UPSTREAM_API = "https://api.poe.com/v1/chat/completions";
-let modelMapping: Record<string, string> = {};
 
-// 加载模型映射
-async function loadModelMapping() {
+interface Config {
+  modelMapping: Record<string, string>;
+  extraBodyParams: string[];
+}
+
+let config: Config = {
+  modelMapping: {},
+  extraBodyParams: ["web_search", "thinking_budget"]
+};
+
+// 加载配置文件
+async function loadConfig() {
   try {
-    const modelsText = await Deno.readTextFile("models.json");
-    modelMapping = JSON.parse(modelsText);
-    console.log(`已加载 ${Object.keys(modelMapping).length} 个模型映射`);
-  } catch {
-    console.warn("无法加载 models.json，将使用空映射");
+    const configText = await Deno.readTextFile("config.json");
+    const parsed = JSON.parse(configText);
+    config.modelMapping = parsed.modelMapping || {};
+    config.extraBodyParams = parsed.extraBodyParams || ["web_search", "thinking_budget"];
+    console.log(`已加载 ${Object.keys(config.modelMapping).length} 个模型映射`);
+    console.log(`已配置 ${config.extraBodyParams.length} 个extra_body参数: ${config.extraBodyParams.join(', ')}`);
+  } catch (e) {
+    console.warn(`无法加载 config.json (${e.message})，将使用默认配置`);
   }
 }
 
 // 工具函数
 const getToken = (req: Request) => req.headers.get("authorization")?.replace("Bearer ", "");
-const mapModel = (model: string) => modelMapping[model] || model;
+const mapModel = (model: string) => config.modelMapping[model] || model;
 const jsonResponse = (data: any, status = 200) => new Response(JSON.stringify(data), {
   status,
   headers: { 
@@ -44,7 +56,7 @@ function filterRequestBody(body: any) {
 
   // 处理标准参数
   for (const param of STANDARD_PARAMS) {
-    if (param === 'model' || param === 'messages') continue; // 已处理
+    if (param === 'model' || param === 'messages') continue;
     
     if (body[param] !== undefined) {
       if (param === 'temperature') {
@@ -55,11 +67,13 @@ function filterRequestBody(body: any) {
     }
   }
   
-  // 收集非标准参数到 extra_body
+  // 收集在 extraBodyParams 中配置的非标准参数到 extra_body
   const extraBody: any = {};
-  for (const key in body) {
-    if (!STANDARD_PARAMS.includes(key) && key !== 'extra_body') {
-      extraBody[key] = body[key];
+  
+  for (const param of config.extraBodyParams) {
+    if (body[param] !== undefined) {
+      console.log(`🔄 将参数 '${param}' 转换到 extra_body`);
+      extraBody[param] = body[param];
     }
   }
   
@@ -93,7 +107,6 @@ async function handleImageGeneration(req: Request) {
   
   // 根据尺寸设置 aspect 参数
   if (size === "1024x1024") {
-    // 默认尺寸，不需要 aspect 参数
     aspect = undefined;
     console.log("尺寸 1024x1024: 不需要 aspect 参数");
   } else if (size === "1792x1024") {
@@ -103,7 +116,6 @@ async function handleImageGeneration(req: Request) {
     aspect = "4:7";
     console.log(`尺寸 1024x1792: 设置 aspect 参数为 ${aspect}`);
   } else {
-    // 不支持的尺寸
     console.log(`拒绝请求: 尺寸 ${size} 不被支持`);
     return jsonResponse({ 
       error: { 
@@ -115,28 +127,23 @@ async function handleImageGeneration(req: Request) {
     }, 400);
   }
   
-  // 确保尺寸为 1024x1024（因为 Poe API 只支持这个尺寸，aspect 参数控制实际比例）
   const upstreamSize = "1024x1024";
   
   console.log(`🖼️ [IMAGE GENERATION] 处理图片生成请求: 用户尺寸=${size}, 上游尺寸=${upstreamSize}, aspect=${aspect}, prompt="${reqBody.prompt}"`);
   
-  // 构建请求体，将 aspect 作为非标准参数传递
-  // filterRequestBody 会自动将 aspect 放入 extra_body
   const requestParams: any = {
     model: "dall-e-3",
     messages: [{ role: "user", content: reqBody.prompt }],
     max_tokens: 1000,
-    size: upstreamSize, // Poe 只支持 1024x1024
+    size: upstreamSize,
     quality: reqBody.quality,
     style: reqBody.style
   };
   
-  // 如果有 aspect 参数，添加它（会被放入 extra_body）
   if (aspect) {
     requestParams.aspect = aspect;
   }
   
-  // 使用 filterRequestBody 来处理参数转换
   const chatRequest = filterRequestBody(requestParams);
   console.log("🖼️ [IMAGE GENERATION] 转换后的请求:", JSON.stringify(chatRequest, null, 2));
 
@@ -283,7 +290,7 @@ async function handle(req: Request): Promise<Response> {
   }
 
   if (req.method === "GET" && pathname === "/v1/models") {
-    const models = [...Object.keys(modelMapping), "dall-e-3"];
+    const models = [...Object.keys(config.modelMapping), "dall-e-3"];
     return jsonResponse({
       object: "list",
       data: models.map(model => ({
@@ -302,6 +309,6 @@ async function handle(req: Request): Promise<Response> {
   });
 }
 
-await loadModelMapping();
+await loadConfig();
 serve(handle, { port: 8000 });
 console.log("🚀 服务已启动: http://localhost:8000");
