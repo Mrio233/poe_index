@@ -99,7 +99,7 @@
   "extraBodyParams": [
     "web_search",
     "thinking_budget",
-    "context_length",
-    "safety_mode"
+    "aspect_ratio",
+    "aspect"
   ]
 }
