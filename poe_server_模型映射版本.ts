@@ -10,7 +10,7 @@ interface Config {
 
 let config: Config = {
   modelMapping: {},
-  extraBodyParams: ["web_search", "thinking_budget"]
+  extraBodyParams: []
 };
 
 // 加载配置文件
@@ -19,11 +19,11 @@ async function loadConfig() {
     const configText = await Deno.readTextFile("config.json");
     const parsed = JSON.parse(configText);
     config.modelMapping = parsed.modelMapping || {};
-    config.extraBodyParams = parsed.extraBodyParams || ["web_search", "thinking_budget"];
-    console.log(`已加载 ${Object.keys(config.modelMapping).length} 个模型映射`);
-    console.log(`已配置 ${config.extraBodyParams.length} 个extra_body参数: ${config.extraBodyParams.join(', ')}`);
+    config.extraBodyParams = parsed.extraBodyParams || [];
+    console.log(`✅ 已加载 ${Object.keys(config.modelMapping).length} 个模型映射`);
+    console.log(`✅ 已配置 ${config.extraBodyParams.length} 个extra_body参数: ${config.extraBodyParams.join(', ')}`);
   } catch (e) {
-    console.warn(`无法加载 config.json (${e.message})，将使用默认配置`);
+    console.warn(`⚠️  无法加载 config.json (${e.message})，将使用默认配置`);
   }
 }
 
@@ -49,17 +49,14 @@ const STANDARD_PARAMS = [
 
 // 过滤支持的参数并自动转换 extra_body
 function filterRequestBody(body: any) {
-  const result: any = {
-    model: mapModel(body.model),
-    messages: body.messages,
-  };
-
+  const result: any = {};
+  
   // 处理标准参数
   for (const param of STANDARD_PARAMS) {
-    if (param === 'model' || param === 'messages') continue;
-    
     if (body[param] !== undefined) {
-      if (param === 'temperature') {
+      if (param === 'model') {
+        result[param] = mapModel(body[param]);
+      } else if (param === 'temperature') {
         result[param] = Math.min(Math.max(body[param], 0), 2);
       } else {
         result[param] = body[param];
@@ -71,7 +68,7 @@ function filterRequestBody(body: any) {
   const extraBody: any = {};
   
   for (const param of config.extraBodyParams) {
-    if (body[param] !== undefined) {
+    if (body[param] !== undefined && !STANDARD_PARAMS.includes(param)) {
       console.log(`🔄 将参数 '${param}' 转换到 extra_body`);
       extraBody[param] = body[param];
     }
@@ -99,23 +96,11 @@ async function handleImageGeneration(req: Request) {
   if (!token) return jsonResponse({ error: { message: "Missing Bearer token" } }, 401);
 
   const reqBody = await req.json();
-  console.log("🖼️ [IMAGE GENERATION] 请求体:", JSON.stringify(reqBody, null, 2));
+  console.log("🖼️ [IMAGE GENERATION] 原始请求体:", JSON.stringify(reqBody, null, 2));
   
-  // 检查尺寸参数
+  // 检查并处理尺寸参数（Poe只支持1024x1024）
   const size = reqBody.size || "1024x1024";
-  let aspect: string | undefined;
-  
-  // 根据尺寸设置 aspect 参数
-  if (size === "1024x1024") {
-    aspect = undefined;
-    console.log("尺寸 1024x1024: 不需要 aspect 参数");
-  } else if (size === "1792x1024") {
-    aspect = "7:4";
-    console.log(`尺寸 1792x1024: 设置 aspect 参数为 ${aspect}`);
-  } else if (size === "1024x1792") {
-    aspect = "4:7";
-    console.log(`尺寸 1024x1792: 设置 aspect 参数为 ${aspect}`);
-  } else {
+  if (!["1024x1024", "1792x1024", "1024x1792"].includes(size)) {
     console.log(`拒绝请求: 尺寸 ${size} 不被支持`);
     return jsonResponse({ 
       error: { 
@@ -127,21 +112,22 @@ async function handleImageGeneration(req: Request) {
     }, 400);
   }
   
-  const upstreamSize = "1024x1024";
-  
-  console.log(`🖼️ [IMAGE GENERATION] 处理图片生成请求: 用户尺寸=${size}, 上游尺寸=${upstreamSize}, aspect=${aspect}, prompt="${reqBody.prompt}"`);
-  
+  // 构建请求参数
   const requestParams: any = {
     model: "dall-e-3",
     messages: [{ role: "user", content: reqBody.prompt }],
     max_tokens: 1000,
-    size: upstreamSize,
+    size: "1024x1024", // Poe 只支持 1024x1024
     quality: reqBody.quality,
     style: reqBody.style
   };
   
-  if (aspect) {
-    requestParams.aspect = aspect;
+  // 如果用户传入了配置在 extraBodyParams 中的参数（如 aspect_ratio），它们会被 filterRequestBody 自动处理
+  // 将用户的原始参数合并到 requestParams 中
+  for (const param of config.extraBodyParams) {
+    if (reqBody[param] !== undefined) {
+      requestParams[param] = reqBody[param];
+    }
   }
   
   const chatRequest = filterRequestBody(requestParams);
@@ -171,9 +157,7 @@ async function handleImageGeneration(req: Request) {
     const content = chatResponse.choices?.[0]?.message?.content || "";
     const imageUrl = content.match(/https:\/\/[^\s\)]+/g)?.[0] || "";
     
-    console.log("🖼️ [IMAGE GENERATION] 上游响应内容:", content);
     console.log("🖼️ [IMAGE GENERATION] 提取的图片URL:", imageUrl);
-    console.log("🖼️ [IMAGE GENERATION] ✅ 准备返回固定的 revised_prompt: '成功生成图片！'");
     
     const result = {
       created: Math.floor(Date.now() / 1000),
